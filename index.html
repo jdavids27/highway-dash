@@ -124,11 +124,11 @@
 // ─── 1. CONSTANTS & LEVEL CONFIG ─────────────────────────────────────────────
 
 const LEVELS = [
-  { playerSpeed: 20, trafficSpeedMin: 8,  trafficSpeedMax: 14, spawnInterval: 1100, roadLength: 800,  maxCars: 14 },
-  { playerSpeed: 26, trafficSpeedMin: 12, trafficSpeedMax: 20, spawnInterval: 850,  roadLength: 1100, maxCars: 20 },
-  { playerSpeed: 32, trafficSpeedMin: 16, trafficSpeedMax: 26, spawnInterval: 650,  roadLength: 1400, maxCars: 28 },
-  { playerSpeed: 40, trafficSpeedMin: 22, trafficSpeedMax: 34, spawnInterval: 450,  roadLength: 1800, maxCars: 40 },
-  { playerSpeed: 50, trafficSpeedMin: 28, trafficSpeedMax: 42, spawnInterval: 300,  roadLength: 2200, maxCars: 54 },
+  { playerSpeed: 27, trafficSpeedMin: 11, trafficSpeedMax: 19, spawnInterval: 1100, roadLength: 800,  maxCars: 14 },
+  { playerSpeed: 35, trafficSpeedMin: 16, trafficSpeedMax: 27, spawnInterval: 850,  roadLength: 1100, maxCars: 20 },
+  { playerSpeed: 43, trafficSpeedMin: 22, trafficSpeedMax: 35, spawnInterval: 650,  roadLength: 1400, maxCars: 28 },
+  { playerSpeed: 54, trafficSpeedMin: 30, trafficSpeedMax: 46, spawnInterval: 450,  roadLength: 1800, maxCars: 40 },
+  { playerSpeed: 68, trafficSpeedMin: 38, trafficSpeedMax: 57, spawnInterval: 300,  roadLength: 2200, maxCars: 54 },
 ];
 
 const LANE_X        = [-4.5, -1.5, 1.5, 4.5];
@@ -708,7 +708,7 @@ function updateCamera() {
 
 function gameLoop() {
   requestAnimationFrame(gameLoop);
-  const dt = Math.min(STATE.clock.getDelta(), 0.05);
+  const dt = Math.min(STATE.clock.getDelta(), 0.025);
 
   if (STATE.phase === 'PLAYING') {
     handleInput();
