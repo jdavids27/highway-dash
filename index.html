@@ -124,11 +124,11 @@
 // ─── 1. CONSTANTS & LEVEL CONFIG ─────────────────────────────────────────────
 
 const LEVELS = [
-  { playerSpeed: 27, trafficSpeedMin: 11, trafficSpeedMax: 19, spawnInterval: 1100, roadLength: 800,  maxCars: 14 },
-  { playerSpeed: 35, trafficSpeedMin: 16, trafficSpeedMax: 27, spawnInterval: 850,  roadLength: 1100, maxCars: 20 },
-  { playerSpeed: 43, trafficSpeedMin: 22, trafficSpeedMax: 35, spawnInterval: 650,  roadLength: 1400, maxCars: 28 },
-  { playerSpeed: 54, trafficSpeedMin: 30, trafficSpeedMax: 46, spawnInterval: 450,  roadLength: 1800, maxCars: 40 },
-  { playerSpeed: 68, trafficSpeedMin: 38, trafficSpeedMax: 57, spawnInterval: 300,  roadLength: 2200, maxCars: 54 },
+  { playerSpeed: 55,  trafficSpeedMin: 22, trafficSpeedMax: 38,  spawnInterval: 1100, roadLength: 1600, maxCars: 14 },
+  { playerSpeed: 75,  trafficSpeedMin: 34, trafficSpeedMax: 55,  spawnInterval: 850,  roadLength: 2200, maxCars: 20 },
+  { playerSpeed: 100, trafficSpeedMin: 52, trafficSpeedMax: 80,  spawnInterval: 650,  roadLength: 2800, maxCars: 28 },
+  { playerSpeed: 130, trafficSpeedMin: 70, trafficSpeedMax: 110, spawnInterval: 450,  roadLength: 3600, maxCars: 40 },
+  { playerSpeed: 170, trafficSpeedMin: 92, trafficSpeedMax: 140, spawnInterval: 300,  roadLength: 4400, maxCars: 54 },
 ];
 
 const LANE_X        = [-4.5, -1.5, 1.5, 4.5];
@@ -708,14 +708,22 @@ function updateCamera() {
 
 function gameLoop() {
   requestAnimationFrame(gameLoop);
-  const dt = Math.min(STATE.clock.getDelta(), 0.025);
+  const dt = Math.min(STATE.clock.getDelta(), 0.05);
 
   if (STATE.phase === 'PLAYING') {
     handleInput();
-    updatePlayer(dt);
-    updateTraffic(dt);
+
+    // Physics substeps — at high level speeds (relative >300 u/s) a single-frame update
+    // can exceed the AABB depth and let cars tunnel through each other. Cap each step at 8ms.
+    const substeps = Math.max(1, Math.ceil(dt / 0.008));
+    const subDt    = dt / substeps;
+    for (let i = 0; i < substeps; i++) {
+      updatePlayer(subDt);
+      updateTraffic(subDt);
+      checkCollisions();
+      if (STATE.phase !== 'PLAYING') break;
+    }
     updateRoad(playerCar.position.z);
-    checkCollisions();
     updateHUD();
 
     if (STATE.distanceTraveled >= LEVELS[STATE.level].roadLength) {
