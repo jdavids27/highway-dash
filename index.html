@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Highway Dash</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+
+    #ui-root { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+    .overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.72); color: #fff; pointer-events: all;
+      gap: 12px;
+    }
+    .overlay.hidden { display: none; }
+
+    .overlay h1 { font-size: 3rem; letter-spacing: 0.12em; color: #e74c3c; text-shadow: 0 0 20px #e74c3c88; }
+    .overlay h2 { font-size: 2.2rem; letter-spacing: 0.08em; }
+    .overlay p  { font-size: 1.1rem; color: #ccc; text-align: center; max-width: 360px; line-height: 1.6; }
+
+    .level-badges { display: flex; gap: 10px; margin: 8px 0; }
+    .badge {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: #333; border: 2px solid #555;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: bold; color: #aaa;
+    }
+    .badge.done   { background: #27ae60; border-color: #2ecc71; color: #fff; }
+    .badge.active { background: #e74c3c; border-color: #ff6b6b; color: #fff; }
+
+    button {
+      margin-top: 8px; padding: 12px 40px; font-size: 1.1rem; cursor: pointer;
+      background: #e74c3c; border: none; color: #fff; border-radius: 6px;
+      letter-spacing: 0.06em; pointer-events: all; transition: background 0.15s, transform 0.1s;
+    }
+    button:hover { background: #c0392b; transform: scale(1.04); }
+
+    #hud {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; color: #fff;
+      text-shadow: 1px 1px 3px #000; pointer-events: none;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.5), transparent);
+    }
+    #hud.hidden { display: none; }
+    #hud-level  { font-size: 1.1rem; font-weight: bold; min-width: 80px; }
+    #hud-speed  { font-size: 1.0rem; min-width: 120px; text-align: right; }
+
+    #hud-progress { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    #progress-bar-bg {
+      width: 220px; height: 10px; background: rgba(255,255,255,0.25);
+      border-radius: 5px; overflow: hidden;
+    }
+    #progress-bar-fill {
+      height: 100%; width: 0%; background: #2ecc71;
+      transition: width 0.1s linear; border-radius: 5px;
+    }
+    #dist-label { font-size: 0.8rem; color: #ddd; }
+
+    #screen-start { gap: 16px; }
+    #screen-start .controls {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px;
+      background: rgba(255,255,255,0.06); padding: 16px 24px; border-radius: 8px;
+      font-size: 0.9rem; color: #bbb;
+    }
+    #screen-start .controls span { color: #fff; font-weight: bold; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui-root">
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="hud-level">Level 1</div>
+    <div id="hud-progress">
+      <div id="progress-bar-bg"><div id="progress-bar-fill"></div></div>
+      <span id="dist-label">800m remaining</span>
+    </div>
+    <div id="hud-speed">72 km/h</div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="screen-start" class="overlay">
+    <h1>HIGHWAY DASH</h1>
+    <p>Dodge traffic across 5 increasingly brutal levels.<br>Reach the end to advance. One crash ends it all.</p>
+    <div class="controls">
+      <div>← → or A D</div><div><span>Switch lanes</span></div>
+    </div>
+    <button id="btn-start">PLAY</button>
+  </div>
+
+  <!-- Game over -->
+  <div id="screen-dead" class="overlay hidden">
+    <h2>CRASH!</h2>
+    <p>You hit another car on Level <span id="dead-level">1</span>.</p>
+    <button id="btn-retry">RETRY LEVEL</button>
+  </div>
+
+  <!-- Level complete -->
+  <div id="screen-complete" class="overlay hidden">
+    <h2>LEVEL COMPLETE!</h2>
+    <div class="level-badges" id="complete-badges"></div>
+    <p id="next-level-text">Get ready for Level 2 — traffic picks up.</p>
+    <button id="btn-next">NEXT LEVEL</button>
+  </div>
+
+  <!-- Win -->
+  <div id="screen-win" class="overlay hidden">
+    <h1>YOU WIN!</h1>
+    <div class="level-badges" id="win-badges"></div>
+    <p>All 5 levels conquered. You're a highway legend.</p>
+    <button id="btn-restart-win">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ─── 1. CONSTANTS & LEVEL CONFIG ─────────────────────────────────────────────
+
+const LEVELS = [
+  { playerSpeed: 20, trafficSpeedMin: 8,  trafficSpeedMax: 14, spawnInterval: 2200, roadLength: 800,  maxCars: 6  },
+  { playerSpeed: 26, trafficSpeedMin: 12, trafficSpeedMax: 20, spawnInterval: 1700, roadLength: 1100, maxCars: 9  },
+  { playerSpeed: 32, trafficSpeedMin: 16, trafficSpeedMax: 26, spawnInterval: 1300, roadLength: 1400, maxCars: 13 },
+  { playerSpeed: 40, trafficSpeedMin: 22, trafficSpeedMax: 34, spawnInterval: 900,  roadLength: 1800, maxCars: 18 },
+  { playerSpeed: 50, trafficSpeedMin: 28, trafficSpeedMax: 42, spawnInterval: 600,  roadLength: 2200, maxCars: 24 },
+];
+
+const LANE_X        = [-4.5, -1.5, 1.5, 4.5];
+const ROAD_SEG_LEN  = 40;
+const ROAD_SEG_CNT  = 10;
+const ROAD_WIDTH    = 12;
+const CAR_POOL_SIZE = 30;
+const SCENERY_COUNT = 32;
+const AABB_SHRINK   = 0.78;
+const LERP_SPEED    = 9;
+const SPAWN_AHEAD   = 90;
+const DEACTIVATE_BEHIND = 35;
+
+const TRAFFIC_COLORS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xe67e22, 0x16a085];
+
+const LEVEL_DESCRIPTIONS = [
+  'Light traffic. Get a feel for the road.',
+  'Traffic speeds up. Stay sharp.',
+  'Denser traffic. No room for hesitation.',
+  'High speed. Traffic is relentless.',
+  'Maximum chaos. Only the best survive.',
+];
+
+// ─── 2. STATE ─────────────────────────────────────────────────────────────────
+
+const STATE = {
+  phase: 'START',
+  level: 0,
+  distanceTraveled: 0,
+  spawnTimer: 0,
+  playerTargetLane: 1,
+  playerCurrentX: LANE_X[1],
+  clock: new THREE.Clock(false),
+};
+
+const keys = {};
+
+// ─── 3. RENDERER & SCENE ─────────────────────────────────────────────────────
+
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 70, 150);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+
+const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+const sun     = new THREE.DirectionalLight(0xffffff, 0.95);
+sun.position.set(20, 40, -10);
+scene.add(ambient, sun);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─── 4. GEOMETRY FACTORIES ───────────────────────────────────────────────────
+
+function makeCarMesh(color, isPlayer) {
+  const group = new THREE.Group();
+
+  const bodyMat  = new THREE.MeshLambertMaterial({ color, flatShading: true });
+  const cabinMat = new THREE.MeshLambertMaterial({ color: isPlayer ? 0x1a1a2e : 0x222222, flatShading: true });
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111, flatShading: true });
+
+  const body  = new THREE.Mesh(new THREE.BoxGeometry(2, 0.65, 4), bodyMat);
+  body.position.y = 0.5;
+
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.72, 2.1), cabinMat);
+  cabin.position.set(0, 1.18, -0.1);
+
+  const bumperMat = new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true });
+  const bumperF = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 0.2), bumperMat);
+  bumperF.position.set(0, 0.35, 2.1);
+  const bumperR = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 0.2), bumperMat);
+  bumperR.position.set(0, 0.35, -2.1);
+
+  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 6);
+  [[-1.05, 0.36, 1.35], [1.05, 0.36, 1.35], [-1.05, 0.36, -1.35], [1.05, 0.36, -1.35]].forEach(([x,y,z]) => {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, y, z);
+    group.add(w);
+  });
+
+  group.add(body, cabin, bumperF, bumperR);
+  group.userData.halfW = 1.0 * AABB_SHRINK;
+  group.userData.halfD = 2.0 * AABB_SHRINK;
+  return group;
+}
+
+function makeRoadSegment() {
+  const group = new THREE.Group();
+
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x3d3d3d, flatShading: true });
+  roadMat.polygonOffset = true;
+  roadMat.polygonOffsetFactor = 1;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_WIDTH, ROAD_SEG_LEN), roadMat);
+  road.rotation.x = -Math.PI / 2;
+  group.add(road);
+
+  // Shoulders
+  const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x556b2f, flatShading: true });
+  [-1, 1].forEach(side => {
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(6, ROAD_SEG_LEN), shoulderMat);
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.set(side * (ROAD_WIDTH / 2 + 3), -0.01, 0);
+    group.add(sh);
+  });
+
+  const dashMat = new THREE.MeshLambertMaterial({ color: 0xeeeeee, flatShading: true });
+  const edgeMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+
+  // Lane dashes
+  [-3, 0, 3].forEach(x => {
+    for (let z = -ROAD_SEG_LEN / 2 + 4; z < ROAD_SEG_LEN / 2; z += 8) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 3.5), dashMat);
+      dash.rotation.x = -Math.PI / 2;
+      dash.position.set(x, 0.01, z);
+      group.add(dash);
+    }
+  });
+
+  // Edge lines
+  [-6, 6].forEach(x => {
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.22, ROAD_SEG_LEN), edgeMat);
+    edge.rotation.x = -Math.PI / 2;
+    edge.position.set(x, 0.01, 0);
+    group.add(edge);
+  });
+
+  return group;
+}
+
+function makeTree() {
+  const g = new THREE.Group();
+  const trunkH = 1.2 + Math.random() * 0.8;
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.2, trunkH, 5),
+    new THREE.MeshLambertMaterial({ color: 0x6b3a1f, flatShading: true })
+  );
+  trunk.position.y = trunkH / 2;
+
+  const fH = 1.8 + Math.random() * 1.2;
+  const foliage = new THREE.Mesh(
+    new THREE.ConeGeometry(0.8 + Math.random() * 0.4, fH, 5),
+    new THREE.MeshLambertMaterial({ color: 0x1e5c13 + Math.floor(Math.random()*0x111111), flatShading: true })
+  );
+  foliage.position.y = trunkH + fH / 2;
+  g.add(trunk, foliage);
+  return g;
+}
+
+function makeRock() {
+  const geo = new THREE.IcosahedronGeometry(0.55 + Math.random() * 0.45, 0);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setXYZ(i,
+      pos.getX(i) + (Math.random() - 0.5) * 0.22,
+      pos.getY(i) + (Math.random() - 0.5) * 0.22,
+      pos.getZ(i) + (Math.random() - 0.5) * 0.22
+    );
+  }
+  geo.computeVertexNormals();
+  const shade = 0x666666 + Math.floor(Math.random() * 0x333333);
+  return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: shade, flatShading: true }));
+}
+
+// ─── 5. ROAD & ENVIRONMENT ────────────────────────────────────────────────────
+
+const roadSegments = [];
+const sceneryPool  = [];
+
+function initRoad() {
+  for (let i = 0; i < ROAD_SEG_CNT; i++) {
+    const seg = makeRoadSegment();
+    seg.position.z = -i * ROAD_SEG_LEN;
+    scene.add(seg);
+    roadSegments.push(seg);
+  }
+}
+
+function initScenery() {
+  for (let i = 0; i < SCENERY_COUNT; i++) {
+    const item = Math.random() > 0.3 ? makeTree() : makeRock();
+    item.visible = false;
+    scene.add(item);
+    sceneryPool.push({ mesh: item, segRef: null });
+  }
+}
+
+function respawnSceneryOnSegment(seg) {
+  sceneryPool.forEach(s => { if (s.segRef === seg) { s.mesh.visible = false; s.segRef = null; } });
+
+  const count = 2 + Math.floor(Math.random() * 4);
+  let placed = 0;
+  for (const s of sceneryPool) {
+    if (s.segRef !== null || placed >= count) continue;
+    const side  = Math.random() > 0.5 ? 1 : -1;
+    const xDist = 7.5 + Math.random() * 4.5;
+    const zOff  = (Math.random() - 0.5) * (ROAD_SEG_LEN - 4);
+    s.mesh.position.set(side * xDist, 0, seg.position.z + zOff);
+    s.mesh.visible = true;
+    s.segRef = seg;
+    placed++;
+  }
+}
+
+function updateRoad(playerZ) {
+  roadSegments.forEach(seg => {
+    if (seg.position.z > playerZ + ROAD_SEG_LEN * 1.5) {
+      const others = roadSegments.filter(s => s !== seg);
+      const minZ   = Math.min(...others.map(s => s.position.z));
+      seg.position.z = minZ - ROAD_SEG_LEN;
+      respawnSceneryOnSegment(seg);
+    }
+  });
+}
+
+function resetRoad() {
+  roadSegments.forEach((seg, i) => {
+    seg.position.z = -i * ROAD_SEG_LEN;
+    respawnSceneryOnSegment(seg);
+  });
+}
+
+// ─── 6. PLAYER ────────────────────────────────────────────────────────────────
+
+const playerCar = makeCarMesh(0xe74c3c, true);
+playerCar.rotation.y = Math.PI;
+scene.add(playerCar);
+
+function updatePlayer(dt) {
+  const cfg = LEVELS[STATE.level];
+  playerCar.position.z -= cfg.playerSpeed * dt;
+  STATE.distanceTraveled += cfg.playerSpeed * dt;
+
+  const targetX = LANE_X[STATE.playerTargetLane];
+  STATE.playerCurrentX = THREE.MathUtils.lerp(STATE.playerCurrentX, targetX, LERP_SPEED * dt);
+  playerCar.position.x = STATE.playerCurrentX;
+
+  const xDiff = targetX - STATE.playerCurrentX;
+  playerCar.rotation.z = THREE.MathUtils.lerp(playerCar.rotation.z, -xDiff * 0.09, 0.15);
+}
+
+function resetPlayer() {
+  STATE.playerTargetLane = 1;
+  STATE.playerCurrentX   = LANE_X[1];
+  playerCar.position.set(LANE_X[1], 0, 0);
+  playerCar.rotation.set(0, Math.PI, 0);
+}
+
+// ─── 7. TRAFFIC SYSTEM ───────────────────────────────────────────────────────
+
+const trafficPool = [];
+
+function initTraffic() {
+  for (let i = 0; i < CAR_POOL_SIZE; i++) {
+    const color = TRAFFIC_COLORS[i % TRAFFIC_COLORS.length];
+    const car   = makeCarMesh(color, false);
+    car.visible = false;
+    car.userData.active   = false;
+    car.userData.speed    = 0;
+    car.userData.oncoming = true;
+    scene.add(car);
+    trafficPool.push(car);
+  }
+}
+
+function spawnTrafficCar() {
+  const cfg    = LEVELS[STATE.level];
+  const active = trafficPool.filter(c => c.userData.active);
+  if (active.length >= cfg.maxCars) return;
+
+  const car = trafficPool.find(c => !c.userData.active);
+  if (!car) return;
+
+  const lane     = Math.floor(Math.random() * 4);
+  const oncoming = Math.random() > 0.25;
+  const speed    = cfg.trafficSpeedMin + Math.random() * (cfg.trafficSpeedMax - cfg.trafficSpeedMin);
+
+  car.position.set(
+    LANE_X[lane],
+    0,
+    playerCar.position.z - (oncoming ? SPAWN_AHEAD : SPAWN_AHEAD * 0.6)
+  );
+
+  car.userData.oncoming = oncoming;
+  car.userData.speed    = oncoming ? speed : -(cfg.playerSpeed * 0.45 + Math.random() * 4);
+  car.userData.active   = true;
+  car.visible           = true;
+  car.rotation.y        = oncoming ? 0 : Math.PI;
+}
+
+function updateTraffic(dt) {
+  const cfg = LEVELS[STATE.level];
+  STATE.spawnTimer += dt * 1000;
+  if (STATE.spawnTimer >= cfg.spawnInterval) {
+    spawnTrafficCar();
+    STATE.spawnTimer = 0;
+  }
+
+  trafficPool.forEach(car => {
+    if (!car.userData.active) return;
+    car.position.z += car.userData.speed * dt;
+
+    if (car.position.z > playerCar.position.z + DEACTIVATE_BEHIND) {
+      car.userData.active = false;
+      car.visible         = false;
+    }
+  });
+}
+
+function deactivateAllTraffic() {
+  trafficPool.forEach(c => { c.userData.active = false; c.visible = false; });
+}
+
+// ─── 8. COLLISION ─────────────────────────────────────────────────────────────
+
+function checkCollisions() {
+  const px  = playerCar.position.x;
+  const pz  = playerCar.position.z;
+  const phw = playerCar.userData.halfW;
+  const phd = playerCar.userData.halfD;
+
+  for (const car of trafficPool) {
+    if (!car.userData.active) continue;
+    const dx = Math.abs(car.position.x - px);
+    const dz = Math.abs(car.position.z - pz);
+    if (dx < phw + car.userData.halfW && dz < phd + car.userData.halfD) {
+      triggerDeath();
+      return;
+    }
+  }
+}
+
+// ─── 9. UI CONTROLLER ────────────────────────────────────────────────────────
+
+function showScreen(id) {
+  ['screen-start','screen-dead','screen-complete','screen-win'].forEach(s => {
+    document.getElementById(s).classList.add('hidden');
+  });
+  if (id) document.getElementById(id).classList.remove('hidden');
+}
+
+function buildBadges(containerId, completedUpTo) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const b = document.createElement('div');
+    b.className = 'badge' + (i < completedUpTo ? ' done' : i === completedUpTo ? ' active' : '');
+    b.textContent = i + 1;
+    el.appendChild(b);
+  }
+}
+
+function updateHUD() {
+  const cfg = LEVELS[STATE.level];
+  const pct = Math.min(STATE.distanceTraveled / cfg.roadLength, 1);
+  document.getElementById('progress-bar-fill').style.width = (pct * 100) + '%';
+  const remaining = Math.max(0, Math.floor(cfg.roadLength - STATE.distanceTraveled));
+  document.getElementById('dist-label').textContent   = remaining + 'm remaining';
+  document.getElementById('hud-level').textContent    = 'Level ' + (STATE.level + 1) + ' / 5';
+  document.getElementById('hud-speed').textContent    = Math.round(cfg.playerSpeed * 3.6) + ' km/h';
+}
+
+function showHUD(visible) {
+  document.getElementById('hud').classList.toggle('hidden', !visible);
+}
+
+// ─── 10. STATE MACHINE ───────────────────────────────────────────────────────
+
+function startLevel(levelIndex) {
+  STATE.level            = levelIndex;
+  STATE.distanceTraveled = 0;
+  STATE.spawnTimer       = 0;
+  STATE.phase            = 'PLAYING';
+
+  resetPlayer();
+  deactivateAllTraffic();
+  resetRoad();
+  updateHUD();
+  showScreen(null);
+  showHUD(true);
+  STATE.clock.start();
+}
+
+function triggerDeath() {
+  STATE.phase = 'DEAD';
+  STATE.clock.stop();
+  document.getElementById('dead-level').textContent = STATE.level + 1;
+  showHUD(false);
+  showScreen('screen-dead');
+}
+
+function triggerLevelComplete() {
+  STATE.phase = 'LEVEL_COMPLETE';
+  STATE.clock.stop();
+  showHUD(false);
+
+  if (STATE.level >= 4) {
+    buildBadges('win-badges', 5);
+    showScreen('screen-win');
+  } else {
+    buildBadges('complete-badges', STATE.level + 1);
+    document.getElementById('next-level-text').textContent =
+      'Level ' + (STATE.level + 2) + ': ' + LEVEL_DESCRIPTIONS[STATE.level + 1];
+    showScreen('screen-complete');
+  }
+}
+
+// ─── 11. INPUT ────────────────────────────────────────────────────────────────
+
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup',   e => { keys[e.code] = false; });
+
+function handleInput() {
+  if (keys['ArrowLeft']  || keys['KeyA']) {
+    if (STATE.playerTargetLane > 0) STATE.playerTargetLane--;
+    keys['ArrowLeft'] = keys['KeyA'] = false;
+  }
+  if (keys['ArrowRight'] || keys['KeyD']) {
+    if (STATE.playerTargetLane < 3) STATE.playerTargetLane++;
+    keys['ArrowRight'] = keys['KeyD'] = false;
+  }
+}
+
+// ─── 12. CAMERA ───────────────────────────────────────────────────────────────
+
+function updateCamera() {
+  const tx = playerCar.position.x;
+  const ty = playerCar.position.y + 6;
+  const tz = playerCar.position.z + 14;
+
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, tx, 0.12);
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, ty, 0.12);
+  camera.position.z = THREE.MathUtils.lerp(camera.position.z, tz, 0.12);
+
+  camera.lookAt(playerCar.position.x * 0.7, playerCar.position.y + 1, playerCar.position.z - 8);
+}
+
+// ─── 13. GAME LOOP ────────────────────────────────────────────────────────────
+
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  const dt = Math.min(STATE.clock.getDelta(), 0.05);
+
+  if (STATE.phase === 'PLAYING') {
+    handleInput();
+    updatePlayer(dt);
+    updateTraffic(dt);
+    updateRoad(playerCar.position.z);
+    checkCollisions();
+    updateHUD();
+
+    if (STATE.distanceTraveled >= LEVELS[STATE.level].roadLength) {
+      triggerLevelComplete();
+    }
+  }
+
+  updateCamera();
+  renderer.render(scene, camera);
+}
+
+// ─── 14. BOOT ─────────────────────────────────────────────────────────────────
+
+function init() {
+  initRoad();
+  initScenery();
+  initTraffic();
+
+  // Place player and camera at start position
+  resetPlayer();
+  camera.position.set(LANE_X[1], 6, 14);
+
+  // Button wiring
+  document.getElementById('btn-start').addEventListener('click', () => startLevel(0));
+  document.getElementById('btn-retry').addEventListener('click', () => startLevel(STATE.level));
+  document.getElementById('btn-next').addEventListener('click',  () => startLevel(STATE.level + 1));
+  document.getElementById('btn-restart-win').addEventListener('click', () => startLevel(0));
+
+  showScreen('screen-start');
+  gameLoop();
+}
+
+init();
+</script>
+</body>
+</html>
