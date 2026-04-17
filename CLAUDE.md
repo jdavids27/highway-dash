@@ -11,15 +11,17 @@ start index.html        # Windows
 open index.html         # macOS
 ```
 
-## Deploying / Committing
+## Git Workflow
 
-This is a single-file project. All changes go into `index.html`. After editing:
+**Commit and push after every meaningful change.** Do not batch up multiple features into one commit — each logical unit of work (feature added, bug fixed, tuning change) gets its own commit and immediate push. This ensures we can always revert to a known-good state.
 
 ```bash
 git add index.html
-git commit -m "descriptive message"
+git commit -m "short description of what changed and why"
 git push
 ```
+
+Commit message format: imperative mood, under 72 chars, specific (e.g. `"Fix collision AABB on same-direction traffic"` not `"fix bug"`).
 
 GitHub remote: https://github.com/jdavids27/highway-dash
 
